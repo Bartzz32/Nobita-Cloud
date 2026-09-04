@@ -1,5 +1,8 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/service-compat.sh"
+
 # --- CONFIG & SEMA UI COLORS ---
 CYAN='\033[38;5;51m'
 PURPLE='\033[38;5;141m'
@@ -338,12 +341,12 @@ while true; do
     read -r choice
 
     case $choice in
-        1) sudo systemctl start $SERVICE; echo -e "  ${GREEN}✔ Started${NC}"; sleep 1 ;;
-        2) sudo systemctl restart $SERVICE; echo -e "  ${CYAN}✔ Restarted${NC}"; sleep 1 ;;
-        3) sudo systemctl stop $SERVICE; echo -e "  ${RED}✔ Stopped${NC}"; sleep 1 ;;
-        4) echo -e "\n${WHITE}--- FULL SYSTEMCTL OUTPUT ---${NC}"; systemctl status $SERVICE --no-pager; read -p "Enter to return..." ;;
+        1) service "$SERVICE" start; echo -e "  ${GREEN}✔ Started${NC}"; sleep 1 ;;
+        2) service "$SERVICE" restart; echo -e "  ${CYAN}✔ Restarted${NC}"; sleep 1 ;;
+        3) service "$SERVICE" stop; echo -e "  ${RED}✔ Stopped${NC}"; sleep 1 ;;
+        4) echo -e "\n${WHITE}--- FULL SERVICE OUTPUT ---${NC}"; service "$SERVICE" status; read -p "Enter to return..." ;;
         5) echo -e "\n${GOLD}--- STREAMING LOGS (Ctrl+C to stop) ---${NC}"; journalctl -u $SERVICE -f ;;
-        6) echo -e "\n${RED}⚠️  DEBUG MODE ACTIVATED${NC}"; sudo systemctl stop $SERVICE; sudo wings; read -p "Enter to return..." ;;
+        6) echo -e "\n${RED}⚠️  DEBUG MODE ACTIVATED${NC}"; service "$SERVICE" stop; sudo wings; read -p "Enter to return..." ;;
         [Aa]) node ;;
         0) echo -e "\n  ${GRAY}Closing Uplink... Goodbye.${NC}"; exit 0 ;;
         *) echo -e "  ${RED}⚠ Invalid Selection${NC}"; sleep 1 ;;

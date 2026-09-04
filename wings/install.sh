@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Use service(8) when systemd is unavailable.
+source "$SCRIPT_DIR/../lib/service-compat.sh"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -195,7 +199,7 @@ else
 fi
 
 print_status "Ensuring Docker service is running"
-sudo systemctl enable --now docker > /dev/null 2>&1
+service docker start > /dev/null 2>&1
 check_success $? "Docker service ready"
 
 # ─────────────────────────────────────────────
@@ -253,56 +257,38 @@ print_info "Wings version: $WINGS_VERSION"
 # ─────────────────────────────────────────────
 # STEP 4: Systemd Service
 # ─────────────────────────────────────────────
-print_step "Systemd Service" "🔧"
+print_step "Service" "🔧"
 
-WINGS_SERVICE_FILE="/etc/systemd/system/wings.service"
+WINGS_SERVICE_FILE="/etc/init.d/wings"
 section_start
 
 if [ -f "$WINGS_SERVICE_FILE" ]; then
     print_ok "Service file already exists"
 else
-    print_status "Creating wings.service"
-    sudo tee "$WINGS_SERVICE_FILE" > /dev/null <<EOF
-[Unit]
-Description=Pterodactyl Wings Daemon
-After=docker.service
-Requires=docker.service
-PartOf=docker.service
-
-[Service]
-User=root
-WorkingDirectory=/etc/pterodactyl
-LimitNOFILE=4096
-PIDFile=/var/run/wings/daemon.pid
-ExecStart=/usr/local/bin/wings
-Restart=on-failure
-StartLimitInterval=180
-StartLimitBurst=30
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
+        print_status "Creating wings init script"
+        sudo tee "$WINGS_SERVICE_FILE" > /dev/null <<'EOF'
+#!/bin/sh
+DAEMON="/usr/local/bin/wings"
+PIDFILE="/var/run/wings.pid"
+LOGFILE="/var/log/wings.log"
+case "$1" in
+    start) mkdir -p /var/run; cd /etc/pterodactyl || exit 1; nohup "$DAEMON" >>"$LOGFILE" 2>&1 & echo $! > "$PIDFILE" ;;
+    stop) [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE" ;;
+    restart) "$0" stop; "$0" start ;;
+    status) [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
+esac
 EOF
+        sudo chmod 0755 "$WINGS_SERVICE_FILE"
     check_success $? "Service file created"
 fi
 
-print_status "Reloading systemd daemon"
-sudo systemctl daemon-reload > /dev/null 2>&1
-check_success $? "Systemd reloaded"
+print_status "Starting wings service"
+systemctl start wings > /dev/null 2>&1
+check_success $? "Service started" "$(section_end)"
 
-print_status "Enabling wings service"
-sudo systemctl enable wings > /dev/null 2>&1
-check_success $? "Service enabled" "$(section_end)"
-
-# ─────────────────────────────────────────────
-# STEP 5: SSL Certificate
-# ─────────────────────────────────────────────
-print_step "SSL Certificate" "🔐"
-
-section_start
 sudo mkdir -p /etc/certs/wing
 check_success $? "Certificate directory ready"
-
 if [ -f /etc/certs/wing/fullchain.pem ] && [ -f /etc/certs/wing/privkey.pem ]; then
     print_ok "SSL certificates already exist"
 else
@@ -313,6 +299,9 @@ else
         > /dev/null 2>&1
     check_success $? "Certificate generated" "$(section_end)"
 fi
+
+CERT_INFO=$(sudo openssl x509 -in /etc/certs/wing/fullchain.pem -noout -subject -dates 2>/dev/null | tr '\n' '; ' | sed 's/; /\n  /g')
+echo -e "  ${DIM}  $CERT_INFO${NC}"
 
 CERT_INFO=$(sudo openssl x509 -in /etc/certs/wing/fullchain.pem -noout -subject -dates 2>/dev/null | tr '\n' '; ' | sed 's/; /\n  /g')
 echo -e "  ${DIM}  $CERT_INFO${NC}"
@@ -328,13 +317,11 @@ sudo tee /usr/local/bin/wing > /dev/null <<'EOF'
 echo ""
 echo "  Pterodactyl Wings Helper"
 echo "  ────────────────────────"
-echo "  start    sudo systemctl start wings"
-echo "  stop     sudo systemctl stop wings"
-echo "  restart  sudo systemctl restart wings"
-echo "  status   sudo systemctl status wings"
-echo "  logs     sudo journalctl -u wings -f"
-echo "  enable   sudo systemctl enable wings"
-echo "  disable  sudo systemctl disable wings"
+echo "  start    sudo service wings start"
+echo "  stop     sudo service wings stop"
+echo "  restart  sudo service wings restart"
+echo "  status   sudo service wings status"
+echo "  logs     sudo tail -f /var/log/wings.log"
 echo ""
 EOF
 
@@ -356,11 +343,11 @@ printf "  ${WHITE}│${NC}  ${DIM}Duration${NC}          ${WHITE}%-37s${NC} ${WH
 printf "  ${WHITE}│${NC}  ${DIM}Wings binary${NC}       ${WHITE}%-37s${NC} ${WHITE}│${NC}\n" "/usr/local/bin/wings"
 printf "  ${WHITE}│${NC}  ${DIM}Config dir${NC}         ${WHITE}%-37s${NC} ${WHITE}│${NC}\n" "/etc/pterodactyl"
 printf "  ${WHITE}│${NC}  ${DIM}SSL certs${NC}          ${WHITE}%-37s${NC} ${WHITE}│${NC}\n" "/etc/certs/wing"
-printf "  ${WHITE}│${NC}  ${DIM}Service${NC}            ${WHITE}%-37s${NC} ${WHITE}│${NC}\n" "wings.service ($(systemctl is-enabled wings 2>/dev/null))"
+printf "  ${WHITE}│${NC}  ${DIM}Service${NC}            ${WHITE}%-37s${NC} ${WHITE}│${NC}\n" "wings ($(service wings status >/dev/null 2>&1 && echo running || echo stopped))"
 printf "  ${WHITE}│${NC}  ${DIM}Docker${NC}             ${WHITE}%-37s${NC} ${WHITE}│${NC}\n" "$(docker --version 2>/dev/null)"
 echo -e "  ${WHITE}└─────────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "  ${CYAN}${ARROW}${NC}  Start Wings:  ${WHITE}sudo systemctl start wings${NC}"
+echo -e "  ${CYAN}${ARROW}${NC}  Start Wings:  ${WHITE}sudo service wings start${NC}"
 echo -e "  ${CYAN}${ARROW}${NC}  Helper:       ${WHITE}wing${NC}"
-echo -e "  ${CYAN}${ARROW}${NC}  Logs:         ${WHITE}sudo journalctl -u wings -f${NC}"
+echo -e "  ${CYAN}${ARROW}${NC}  Logs:         ${WHITE}sudo tail -f /var/log/wings.log${NC}"
 echo ""

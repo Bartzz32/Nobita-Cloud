@@ -1,5 +1,8 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/service-compat.sh"
+
 # ==================================================
 #  MACK CONTROL PANEL v3.0 | Auto-Detect System
 # ==================================================

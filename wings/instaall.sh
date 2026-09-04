@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/service-compat.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -66,7 +69,7 @@ curl -sSL https://get.docker.com/ | CHANNEL=stable bash
 check_success "Docker installed"
 
 print_status "Starting Docker service"
-sudo systemctl enable --now docker > /dev/null 2>&1
+service docker start > /dev/null 2>&1
 check_success "Docker service started"
 
 # ------------------------
@@ -110,37 +113,26 @@ check_success "Permissions set"
 # ------------------------
 print_header "CONFIGURING SERVICE"
 print_status "Creating service file"
-WINGS_SERVICE_FILE="/etc/systemd/system/wings.service"
+WINGS_SERVICE_FILE="/etc/init.d/wings"
 sudo tee $WINGS_SERVICE_FILE > /dev/null <<EOF
-[Unit]
-Description=Pterodactyl Wings Daemon
-After=docker.service
-Requires=docker.service
-PartOf=docker.service
-
-[Service]
-User=root
-WorkingDirectory=/etc/pterodactyl
-LimitNOFILE=4096
-PIDFile=/var/run/wings/daemon.pid
-ExecStart=/usr/local/bin/wings
-Restart=on-failure
-StartLimitInterval=180
-StartLimitBurst=30
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
+#!/bin/sh
+DAEMON="/usr/local/bin/wings"
+PIDFILE="/var/run/wings.pid"
+LOGFILE="/var/log/wings.log"
+case "\$1" in
+    start) mkdir -p /var/run; cd /etc/pterodactyl || exit 1; nohup "\$DAEMON" >>"\$LOGFILE" 2>&1 & echo \$! > "\$PIDFILE" ;;
+    stop) [ -f "\$PIDFILE" ] && kill "\$(cat "\$PIDFILE")" 2>/dev/null || true; rm -f "\$PIDFILE" ;;
+    restart) "\$0" stop; "\$0" start ;;
+    status) [ -f "\$PIDFILE" ] && kill -0 "\$(cat "\$PIDFILE")" 2>/dev/null ;;
+    *) echo "Usage: \$0 {start|stop|restart|status}"; exit 2 ;;
+esac
 EOF
+sudo chmod 0755 "$WINGS_SERVICE_FILE"
 check_success "Service file created"
 
-print_status "Reloading systemd"
-sudo systemctl daemon-reload > /dev/null 2>&1
-check_success "Systemd reloaded"
-
-print_status "Enabling service"
-sudo systemctl enable wings > /dev/null 2>&1
-check_success "Service enabled"
+print_status "Starting service"
+systemctl start wings > /dev/null 2>&1
+check_success "Service started"
 
 # ------------------------
 # 5. SSL Certificate
@@ -163,11 +155,11 @@ sudo tee /usr/local/bin/wing > /dev/null <<'EOF'
 #!/bin/bash
 echo ""
 echo "Wings Helper Commands:"
-echo "  start    : sudo systemctl start wings"
-echo "  stop     : sudo systemctl stop wings"
-echo "  status   : sudo systemctl status wings"
-echo "  restart  : sudo systemctl restart wings"
-echo "  logs     : sudo journalctl -u wings -f"
+echo "  start    : sudo service wings start"
+echo "  stop     : sudo service wings stop"
+echo "  status   : sudo service wings status"
+echo "  restart  : sudo service wings restart"
+echo "  logs     : sudo tail -f /var/log/wings.log"
 echo ""
 EOF
 
@@ -181,7 +173,7 @@ print_header "COMPLETE"
 echo -e "${GREEN}${CHECKMARK} Installation finished${NC}"
 echo ""
 echo -e "${CYAN}Start Wings:${NC}"
-echo -e "  sudo systemctl start wings"
+echo -e "  sudo service wings start"
 echo ""
 echo -e "${CYAN}Use helper:${NC}"
 echo -e "  wing"
